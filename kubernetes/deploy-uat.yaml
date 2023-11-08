@@ -1,0 +1,167 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: fe-campaign
+  labels:
+    app: fe-campaign
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: registry
+  namespace: fe-campaign
+data:
+  .dockerconfigjson: ewoJImF1dGhzIjogewoJCSJnaXQuZWRlbmZhcm0uaWQ6NTA1MCI6IHsKCQkJImF1dGgiOiAiYkdsdVoyZHZPbnBDU2xwTldYRk9OVlJWT0ZaNlJ6YzRhRzloIgoJCX0KCX0KfQ==
+type: kubernetes.io/dockerconfigjson
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fe-campaign
+  labels:
+    app: fe-campaign
+  namespace: fe-campaign
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: fe-campaign
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: fe-campaign
+    spec:
+      imagePullSecrets:
+      - name: registry
+      containers:
+      - name: fe-campaign
+        image: git.edenfarm.id:5050/project-version3/erp-dashboard/campaign/uat:<VERSION>
+        ports:
+          - name: http-port
+            containerPort: 8080
+        imagePullPolicy: Always
+        resources:
+          requests:
+            memory: 50Mi
+            cpu: 15m
+          limits:
+            memory: 350Mi
+            cpu: 200m
+        volumeMounts:
+        - name: tz-config
+          mountPath: /etc/localtime
+      volumes:
+        - name: tz-config
+          hostPath:
+            path: /usr/share/zoneinfo/Asia/Jakarta
+            type: File
+      # tolerations:
+      # - key: instance_type
+      #   value: service
+      #   effect: NoSchedule
+      #   operator: Equal
+      # affinity:
+      #   nodeAffinity:
+      #     requiredDuringSchedulingIgnoredDuringExecution:
+      #       nodeSelectorTerms:
+      #       - matchExpressions:
+      #         - key: role
+      #           operator: In
+      #           values:
+      #           - devops
+      #   podAntiAffinity:
+      #     requiredDuringSchedulingIgnoredDuringExecution:
+      #     - labelSelector:
+      #         matchExpressions:
+      #         - key: app
+      #           operator: In
+      #           values:
+      #           - fe-campaign
+      #       topologyKey: kubernetes.io/hostname
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: svc-fe-campaign
+  namespace: fe-campaign
+  labels:
+    app: fe-campaign
+spec:
+  ports:
+  - name: http
+    protocol: TCP
+    port: 80
+    targetPort: http-port
+  selector:
+    app: fe-campaign
+---
+
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: hpa-fe-campaign
+  namespace: fe-campaign
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: fe-campaign
+  minReplicas: 1
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 75
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 75
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: fe-campaign
+  namespace: fe-campaign
+spec:
+  dnsNames:
+    - uat-fe-campaign.edenfarm.tech
+  secretName: fe-campaign-tls
+  issuerRef:
+    name: letsencrypt-cluster-issuer
+    kind: ClusterIssuer
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  namespace: fe-campaign
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+  name: fe-campaign
+spec:
+  tls:
+  - hosts:
+    - uat-fe-campaign.edenfarm.tech
+    secretName: fe-campaign-tls
+  rules:
+  - host: uat-fe-campaign.edenfarm.tech
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: svc-fe-campaign
+            port:
+              number: 80
